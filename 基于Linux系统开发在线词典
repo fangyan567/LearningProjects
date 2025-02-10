@@ -1,0 +1,311 @@
+
+Linux开发词典
+做了一个小级别的实验项目，对之前所学过的知识有个综合性的总结。在线词典实验涉及有，Linux C语言的开发、网络套接字编程、多进程开发、sqlite3数据库接口调用、文件读写等操作，make编译及Makefile文件的编写。。
+
+**项目介绍**
+
+项目总体划分为客户端、和服务端两个部分。客户端（也是APP）一方面为使用的用户提供简单的注册、登录、查询等操作，另一方面负责与服务端进行TCP通信，向服务器发送请求。而真正提供服务的是服务端进程，它不仅能和数据库进行交互，而且要接收用户的请求，把服务提供给用户。
+
+用户通过客户端程序访问部署在服务端的词典，具体可以实现的功能有：
+
+    注册用户/用户登录
+    用户查询词典（查询英文单词的解释信息）
+    用户查询自己的历史查询记录
+
+ 
+
+ 
+具体设计流程
+
+运行客户端，首先出现一个主菜单,用户输入‘1’为注册，‘2‘为登录，‘3’为退出。当用户输入‘2’，登录成功后，又会进入二级服务菜单。这时用户输入‘1’为查询单词，‘2‘为查询历史，‘3’为退出。 
+
+以上是客户端应用的实现，底层调用的网络接口免不了要跟服务端交互。至于请求的类型和数据，需要我们自己根据需求来设计，与服务端统一保持一致即可。
+
+ 
+
+服务端，主要负责接收客户端的请求信息，另一方面与数据库（调用相关函数创建）进行交互。由于客户端不只一个，我们用多进程的方法来处理多个客户端的请求；分析不同的请求信息，比如查询历史，服务端接收到这一命令后，就向数据库的历史记录表查询相关信息，再将结果处理，再返回到客户端。
+
+虽然可以将词典的内容做成一个数据表，载入数据库，这样查询起来也十分方便，但是太过麻烦。所以我们将单词与相关解释信息放到一个文件中，查询单词时，到这个文件中匹配信息即可。
+
+ 
+
+ 
+代码实现（代码量较大，只展示部分）
+
+ 
+共用头文件 common.h
+
+    #ifndef __COMMON_H__
+    #define __COMMON_H__
+     
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <sys/types.h>          /* See NOTES */
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <string.h>
+    #include <unistd.h>
+    #include <sqlite3.h>
+    #include <signal.h>
+    #include <time.h>
+     
+    #define   N  32
+    typedef struct {
+    	int type;
+    	char name[N];
+    	char data[256];
+    }MSG;
+     
+    #define  R  1   // user - register
+    #define  L  2   // user - login
+    #define  Q  3   // user - query
+    #define  H  4   // user - history
+     
+    #define  DATABASE  "my.db" //创建的数据库
+     
+     
+    #define SERADDR "127.0.0.1"   //这里笔者偷个懒，使用网络回送地址，就不进行远程通信了
+    #define SERPORT 5001          //服务端占用 5001 这个端口
+     
+    #endif
+
+ 
+客户端文件 client.c
+
+    #include "common.h"
+     
+     
+    int  do_register(int sockfd, MSG *msg);	//注册用户
+    int do_login(int sockfd, MSG *msg);		//用户登录
+    int do_query(int sockfd, MSG *msg);		//查询单词
+    int do_history(int sockfd, MSG *msg);	//查询历史
+    int SubMenu(int sockfd);				//二级子菜单
+     
+     
+     
+    int main(int argc, const char *argv[])
+    {
+    	int sockfd;
+    	struct sockaddr_in  serveraddr;
+    	int n;
+    	MSG  msg;
+     
+    	if((sockfd = socket(AF_INET, SOCK_STREAM,0)) < 0)
+    	{
+    		perror("fail to socket.\n");
+    		return -1;
+    	}
+     
+    	bzero(&serveraddr, sizeof(serveraddr));
+    	serveraddr.sin_family = AF_INET;
+    	serveraddr.sin_addr.s_addr = inet_addr(SERADDR);
+    	serveraddr.sin_port = htons(SERPORT);
+     
+    	if(connect(sockfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr)) < 0)
+    	{
+    		perror("fail to connect");
+    		return -1;
+    	}
+     
+    	while(1)
+    	{
+    		printf("*****************************************************************\n");
+    		printf("* 1.register          2.login              3.quit               *\n");
+    		printf("*****************************************************************\n");
+    		printf(">");
+     
+    		scanf("%d", &n);
+    		getchar();
+     
+    		switch(n)
+    		{
+    		case 1:
+    			do_register(sockfd, &msg);
+    			break;
+    		case 2:
+    			if(do_login(sockfd, &msg) == 1)
+    			{
+    				SubMenu(sockfd);	
+    			}
+    			break;
+    		case 3:
+    			close(sockfd);
+    			exit(0);
+    			break;
+    		default:
+    			printf("Invalid data cmd.\n");
+    		}
+     
+     
+    	}
+    	return 0;
+    }
+     
+    int SubMenu(int sockfd)
+    {
+    	int n;
+    	MSG  msg;
+     
+    	while(1)
+    	{
+    		printf("-----------------------------------------------------\n");
+    		printf("- 1.query_word   2.history_record   3.quit          -\n");
+    		printf("-----------------------------------------------------\n");
+    		printf(">");
+    		scanf("%d", &n);
+    		getchar();
+     
+    		switch(n)
+    		{
+    		case 1:
+    			do_query(sockfd, &msg);
+    			break;
+    		case 2:
+    			do_history(sockfd, &msg);
+    			break;
+    		case 3:
+    			close(sockfd);
+    			exit(0);
+    			break;
+    		default :
+    			printf("Invalid data cmd.\n");
+    		}
+     
+    	}
+    	return 0;
+    }
+     
+     
+    ///////////////////////////////////////////////
+    //省略一堆底层函数实现
+    //////////////////////////////////////////////
+
+ 
+服务端文件 server.c
+
+    #include "common.h"
+     
+     
+     
+    int do_client(int acceptfd, sqlite3 *db); //客户端请求入口
+    void do_register(int acceptfd, MSG *msg, sqlite3 *db);//注册用户实现
+    int do_login(int acceptfd, MSG *msg, sqlite3 *db);//用户登录实现
+    int do_query(int acceptfd, MSG *msg, sqlite3 *db);//用户查询单词实现
+    int do_history(int acceptfd, MSG *msg, sqlite3 *db);//查询历史记录
+    int history_callback(void* arg,int f_num,char** f_value,char** f_name);//查询历史函数使用的回调
+    int do_searchword(int acceptfd, MSG *msg, char word[]);//查询单词函数的回调
+    int get_date(char *date);//获取时间
+     
+    int main(int argc, const char *argv[])
+    {
+    	int sockfd;
+    	struct sockaddr_in  serveraddr;
+    	int acceptfd;
+     
+    	sqlite3 *db;
+    	pid_t pid;
+     
+    	if(sqlite3_open(DATABASE, &db) != SQLITE_OK)
+    	{
+    		printf("%s\n", sqlite3_errmsg(db));
+    		return -1;
+    	}
+    	else
+    	{
+    		printf("open DATABASE success.\n");
+    	}
+     
+    	if((sockfd = socket(AF_INET, SOCK_STREAM,0)) < 0)
+    	{
+    		perror("fail to socket.\n");
+    		return -1;
+    	}
+     
+    	bzero(&serveraddr, sizeof(serveraddr));
+    	serveraddr.sin_family = AF_INET;
+    	serveraddr.sin_addr.s_addr = inet_addr(SERADDR);
+    	serveraddr.sin_port = htons(SERPORT);
+     
+    	if(bind(sockfd, (struct sockaddr *)&serveraddr, sizeof(serveraddr)) < 0)
+    	{
+    		perror("fail to bind.\n");
+    		return -1;
+    	}
+     
+    	if(listen(sockfd, 5) < 0)
+    	{
+    		printf("fail to listen.\n");
+    		return -1;
+    	}
+     
+    	signal(SIGCHLD, SIG_IGN); //处理僵尸进程
+    	while(1)
+    	{
+    		if((acceptfd = accept(sockfd, NULL, NULL)) < 0)
+    		{
+    			perror("fail to accept");
+    			return -1;
+    		}
+     
+    		if((pid = fork()) < 0)
+    		{
+    			perror("fail to fork");
+    			return -1;
+    		}
+    		else if(pid == 0)  
+    		{//son process
+    			close(sockfd);
+    			do_client(acceptfd, db);
+     
+    		}
+    		else  
+    		{//father process
+     
+    			close(acceptfd);
+    		}
+    	}
+     
+    	return 0;
+    }
+     
+     
+    int do_client(int acceptfd, sqlite3 *db)
+    {
+    	MSG msg;
+    	while(recv(acceptfd, &msg, sizeof(msg), 0) > 0)
+    	{
+    		printf("type:%d\n", msg.type);
+    		switch(msg.type)
+    		{
+    		case R:
+    			do_register(acceptfd, &msg, db);
+    			break;
+    		case L:
+    			do_login(acceptfd, &msg, db);
+    			break;
+    		case Q:
+    			do_query(acceptfd, &msg, db);
+    			break;
+    		case H:
+    			do_history(acceptfd, &msg, db);
+    			break;
+    		default:
+    			printf("Invalid data msg.\n");
+    		}
+     
+    	}
+     
+    	printf("client exit.\n");
+    	close(acceptfd);
+    	exit(0);
+     
+    	return 0;
+    }
+     
+     
+    ///////////////////////////////////////////////
+    //省略一堆底层函数实现
+    //////////////////////////////////////////////
+
+ 
