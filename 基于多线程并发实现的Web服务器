@@ -1,0 +1,421 @@
+
+单线程的web服务器实现
+
+客户端：
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <arpa/inet.h>
+
+int main()
+{
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == -1)
+    {
+        perror("client create socket fail");
+        return -1;
+    }
+    
+    struct sockaddr_in saddr;
+    saddr.sin_family = AF_INET;
+    saddr.sin_port = htons(9999);
+    inet_pton(AF_INET, "192.168.1.13", &saddr.sin_addr.s_addr);
+    int ret = connect(fd, (struct sockaddr*)&saddr, sizeof(saddr));
+    if (ret == -1)
+    {
+        perror("connect fail");
+        return -1;
+    }
+
+    //通信
+    int number = 0;
+    while (1)
+    {
+        //发送数据
+        char buff[1024];
+        sprintf(buff, "welcome to beijing, %d...\n!", number++);
+        send(fd, buff, strlen(buff) + 1, 0);
+        
+        //接受数据
+        memset(buff, 0, sizeof(buff));
+        int len = recv(fd, buff, sizeof(buff), 0);
+        if (len > 0)
+        {
+            printf("server say : %s\n", buff);
+        }
+
+        else if (len == 0)
+        {
+            printf("server already break");
+            break;
+        }
+        else
+        {
+            perror("server recv fail");
+            break;
+        }
+        sleep(1);
+    }
+    close(fd);
+    
+    return 0;
+}
+
+```
+
+
+服务端：
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <arpa/inet.h>
+
+int main()
+{
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == -1)
+    {
+        perror("server create socket fail");
+        return -1;
+    }
+    
+    struct sockaddr_in saddr;
+    saddr.sin_family = AF_INET;
+    saddr.sin_port = htons(9999);
+    saddr.sin_addr.s_addr = INADDR_ANY;
+    int ret = bind(fd, (struct sockaddr*)&saddr, sizeof(saddr));
+    if (ret == -1)
+    {
+        perror("bind fail");
+        return -1;
+    }
+
+    ret = listen(fd, 128);
+    if (ret == -1)
+    {
+        perror("listen fail");
+        return -1;
+    }
+    //阻塞等待客户端的链接
+    struct sockaddr_in caddr;
+    int addrlen = sizeof(caddr);
+    int cfd = accept(fd, (struct sockaddr*)&caddr, &addrlen);
+    if (cfd == -1)
+    {
+        perror("accept fail");
+        return -1;
+    }
+    
+    //链接建立成功，打印客户端的ip和端口信息
+    char ip[32];
+    printf("客户端的ip：%s, 端口：%d\n", inet_ntop(AF_INET, &caddr.sin_addr.s_addr, ip, sizeof(ip)), ntohs(caddr.sin_port));
+    
+    //通信
+    while (1)
+    {
+        //接受数据
+        char buff[1024];
+        int len = recv(cfd, buff, sizeof(buff), 0);
+        if (len > 0)
+        {
+            printf("client say : %s\n", buff);
+            send(cfd, buff, len, 0);
+        }
+
+        else if (len == 0)
+        {
+            printf("client already break");
+            break;
+        }
+        else
+        {
+            perror("recv fail");
+            break;
+        }
+    }
+
+    close(fd);
+    close(cfd);
+    return 0;
+}
+
+输出:
+server say : welcome to beijing!, 0...
+
+server say : welcome to beijing!, 1...
+
+server say : welcome to beijing!, 2...
+
+server say : welcome to beijing!, 3...
+
+server say : welcome to beijing!, 4...
+
+server say : welcome to beijing!, 5...
+
+server say : welcome to beijing!, 6...
+
+server say : welcome to beijing!, 7...
+
+server say : welcome to beijing!, 8...
+
+server say : welcome to beijing!, 9...
+
+server say : welcome to beijing!, 10...
+
+```
+
+多线程的并发web服务器实现
+
+客户端：
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <arpa/inet.h>
+
+int main()
+{
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == -1)
+    {
+        perror("client create socket fail");
+        return -1;
+    }
+    
+    struct sockaddr_in saddr;
+    saddr.sin_family = AF_INET;
+    saddr.sin_port = htons(9999);
+    inet_pton(AF_INET, "192.168.1.13", &saddr.sin_addr.s_addr);
+    int ret = connect(fd, (struct sockaddr*)&saddr, sizeof(saddr));
+    if (ret == -1)
+    {
+        perror("connect fail");
+        return -1;
+    }
+
+    //通信
+    int number = 0;
+    while (1)
+    {
+        //发送数据
+        char buff[1024];
+        sprintf(buff, "welcome to beijing!, %d...\n", number++);
+        send(fd, buff, strlen(buff) + 1, 0);
+        
+        //接受数据
+        memset(buff, 0, sizeof(buff));
+        int len = recv(fd, buff, sizeof(buff), 0);
+        if (len > 0)
+        {
+            printf("server say : %s\n", buff);
+        }
+
+        else if (len == 0)
+        {
+            printf("server already break");
+            break;
+        }
+        else
+        {
+            perror("server recv fail");
+            break;
+        }
+        sleep(1);
+    }
+    close(fd);
+    
+    return 0;
+}
+
+```
+
+服务端：
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <arpa/inet.h>
+#include <pthread.h>
+
+struct SockInfo
+{
+    struct sockaddr_in addr;
+    int fd;
+};
+
+void *working(void *arg);
+struct SockInfo infos[512];
+
+int main()
+{
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd == -1)
+    {
+        perror("server create socket fail");
+        return -1;
+    }
+    
+    struct sockaddr_in saddr;
+    saddr.sin_family = AF_INET;
+    saddr.sin_port = htons(9999);
+    saddr.sin_addr.s_addr = INADDR_ANY;
+    int ret = bind(fd, (struct sockaddr*)&saddr, sizeof(saddr));
+    if (ret == -1)
+    {
+        perror("bind fail");
+        return -1;
+    }
+
+    ret = listen(fd, 128);
+    if (ret == -1)
+    {
+        perror("listen fail");
+        return -1;
+    }
+     
+    int max = sizeof(infos) / sizeof(infos[0]);
+    for (int i = 0; i < max; i++)
+    {
+        bzero(&infos[i], sizeof(infos[i]));
+        infos[i].fd = -1;
+    }
+    //阻塞等待客户端的链接
+    struct sockaddr_in caddr;
+    int addrlen = sizeof(struct sockaddr_in);
+    while (1)
+    {
+        struct SockInfo *pinfo;
+        for (int i = 0; i < max; i++)
+        {
+            if(infos[i].fd == -1)
+            {
+                pinfo = &infos[i];
+                break;
+            }
+        }
+        int cfd = accept(fd, (struct sockaddr*)&pinfo->addr, &addrlen);
+        pinfo->fd = cfd;
+        if (cfd == -1)
+        {
+            perror("accept fail");
+            break;
+        }
+        //创建子线程
+        pthread_t tid;
+        pthread_create(&tid, NULL, working, pinfo);
+        pthread_detach(tid);
+    }
+    close(fd);
+    return 0;
+}
+
+void *working(void *arg)
+{
+    struct SockInfo *pinfo = (struct SockInfo *) arg;
+    
+    //链接建立成功，打印客户端的ip和端口信息
+    char ip[32];
+    printf("客户端的ip：%s, 端口：%d\n", inet_ntop(AF_INET, &pinfo->addr.sin_addr.s_addr, ip, sizeof(ip)), ntohs(pinfo->addr.sin_port));
+    
+    //通信
+    while (1)
+    {
+        //接受数据
+        char buff[1024];
+        int len = recv(pinfo->fd, buff, sizeof(buff), 0);
+        if (len > 0)
+        {
+            printf("client say : %s\n", buff);
+            send(pinfo->fd, buff, len, 0);
+        }
+
+        else if (len == 0)
+        {
+            printf("client already break");
+            break;
+        }
+        else
+        {
+            perror("recv fail");
+            break;
+        }
+    }
+
+    //关闭文件描述符
+    close(pinfo->fd);
+    pinfo->fd = -1;
+    return 0;
+}
+
+//开启了4个client。
+输出：
+客户端的ip：192.168.1.13, 端口：49432
+client say : welcome to beijing!, 0...
+
+client say : welcome to beijing!, 1...
+
+client say : welcome to beijing!, 2...
+
+client say : welcome to beijing!, 3...
+
+client say : welcome to beijing!, 4...
+
+client say : welcome to beijing!, 5...
+
+客户端的ip：192.168.1.13, 端口：49434
+client say : welcome to beijing!, 0...
+
+client say : welcome to beijing!, 16...
+
+client say : welcome to beijing!, 1...
+
+client say : welcome to beijing!, 17...
+
+client say : welcome to beijing!, 2...
+
+client say : welcome to beijing!, 18...
+
+client say : welcome to beijing!, 3...
+
+客户端的ip：192.168.1.13, 端口：49436
+client say : welcome to beijing!, 0...
+
+client say : welcome to beijing!, 9...
+
+client say : welcome to beijing!, 25...
+
+client say : welcome to beijing!, 1...
+
+client say : welcome to beijing!, 10...
+
+client say : welcome to beijing!, 26...
+
+客户端的ip：192.168.1.13, 端口：49438
+client say : welcome to beijing!, 0...
+
+client say : welcome to beijing!, 31...
+
+client say : welcome to beijing!, 47...
+
+client say : welcome to beijing!, 23...
+
+client say : welcome to beijing!, 1...
+
+client say : welcome to beijing!, 32...
+
+client say : welcome to beijing!, 48...
+
+client say : welcome to beijing!, 24...
+
+
+```
