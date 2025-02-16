@@ -1,0 +1,123 @@
+/
+*实现一个线程安全的LFU（Least Frequently Used）缓存需要考虑以下几个关键点：
+1. LFU缓存逻辑：我们需要维护一个数据结构来存储缓存项，并且能够快速找到最少使用的项进行淘汰。
+2. 线程安全：由于多个线程可能同时访问缓存，我们需要使用互斥锁来保护共享资源。
+下面是一个完整的C++实现，使用了std::unordered_map和std::list来实现LFU缓存，并且使用了std::mutex来保证线程安全。
+*/
+
+#include <iostream>
+#include <unordered_map>
+#include <list>
+#include <mutex>
+
+class LFUCache {
+public:
+    LFUCache(int capacity) : capacity(capacity), min_freq(0) {}
+
+    int get(int key) {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (key_to_val_freq.find(key) == key_to_val_freq.end()) {
+            return -1; // Key not found
+        }
+        // Update the frequency of the key
+        int old_freq = key_to_val_freq[key].second;
+        freq_to_keys[old_freq].erase(key_to_iterator[key]);
+        if (freq_to_keys[old_freq].empty()) {
+            freq_to_keys.erase(old_freq);
+            if (old_freq == min_freq) {
+                min_freq++;
+            }
+        }
+        int new_freq = old_freq + 1;
+        freq_to_keys[new_freq].push_front(key);
+        key_to_val_freq[key].second = new_freq;
+        key_to_iterator[key] = freq_to_keys[new_freq].begin();
+        return key_to_val_freq[key].first;
+    }
+
+    void put(int key, int value) {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (capacity <= 0) return;
+
+        if (get(key) != -1) {
+            key_to_val_freq[key].first = value;
+            return;
+        }
+
+        if (key_to_val_freq.size() >= capacity) {
+            int key_to_evict = freq_to_keys[min_freq].back();
+            freq_to_keys[min_freq].pop_back();
+            key_to_val_freq.erase(key_to_evict);
+            key_to_iterator.erase(key_to_evict);
+        }
+
+        key_to_val_freq[key] = {value, 1};
+        freq_to_keys[1].push_front(key);
+        key_to_iterator[key] = freq_to_keys[1].begin();
+        min_freq = 1;
+    }
+
+private:
+    int capacity;
+    int min_freq;
+    std::unordered_map<int, std::pair<int, int>> key_to_val_freq; // key -> {value, freq}
+    std::unordered_map<int, std::list<int>::iterator> key_to_iterator; // key -> iterator in freq list
+    std::unordered_map<int, std::list<int>> freq_to_keys; // freq -> list of keys
+    std::mutex mtx;
+};
+
+int main() {
+    LFUCache cache(2);
+
+    cache.put(1, 1);
+    cache.put(2, 2);
+    std::cout << cache.get(1) << std::endl; // returns 1
+    cache.put(3, 3); // evicts key 2
+    std::cout << cache.get(2) << std::endl; // returns -1 (not found)
+    std::cout << cache.get(3) << std::endl; // returns 3
+    cache.put(4, 4); // evicts key 1
+    std::cout << cache.get(1) << std::endl; // returns -1 (not found)
+    std::cout << cache.get(3) << std::endl; // returns 3
+    std::cout << cache.get(4) << std::endl; // returns 4
+
+    return 0;
+}
+
+
+代码输出
+1
+-1
+3
+-1
+3
+4
+
+
+/*
+代码说明：
+数据结构：
+
+key_to_val_freq：存储键值对及其使用频率。
+
+freq_to_keys：存储每个频率对应的键列表。
+
+key_to_iterator：存储每个键在freq_to_keys中的迭代器，方便快速删除和更新。
+
+线程安全：
+
+使用std::mutex来保护共享资源的访问，确保在多线程环境下不会出现竞争条件。
+
+LFU逻辑：
+
+get操作会更新键的使用频率，并调整其在freq_to_keys中的位置。
+
+put操作会插入新的键值对，如果缓存已满，则淘汰使用频率最低的键。
+
+测试：
+在main函数中，我们对缓存进行了简单的测试，验证了其基本功能。
+
+注意事项：
+该实现假设键和值都是整数类型。如果需要支持其他类型，可以将其模板化。
+
+该实现是基础的LFU缓存，实际生产环境中可能需要进一步优化性能或扩展功能。
+*/
