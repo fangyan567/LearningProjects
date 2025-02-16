@@ -1,0 +1,143 @@
+/*实现一个线程安全的LFU（Least Frequently Used）缓存可以通过结合哈希表和双向链表的方式来完成。我们将使用一个std::mutex来确保线程安全。
+下面是一个简单的C++实现，包括了完整的LFU缓存代码：
+*/
+
+
+#include <iostream>
+#include <unordered_map>
+#include <list>
+#include <mutex>
+#include <stdexcept>
+
+template <typename KeyType, typename ValueType>
+class LFUCache {
+public:
+    LFUCache(int capacity) : capacity_(capacity) {}
+
+    ValueType get(const KeyType& key) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        
+        // 如果缓存为空或者key不存在，返回异常
+        if (capacity_ == 0 || cache_.find(key) == cache_.end()) {
+            throw std::runtime_error("Key not found");
+        }
+
+        // 增加该key的使用频率
+        touch(key);
+        
+        return cache_[key].first;  // 返回缓存的值
+    }
+
+    void put(const KeyType& key, const ValueType& value) {
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        if (capacity_ == 0) return; // 容量为0的情况无需进行操作
+
+        // 如果缓存中已有该key，则更新值并增加使用频率
+        if (cache_.find(key) != cache_.end()) {
+            cache_[key].first = value;
+            touch(key);
+            return;
+        }
+
+        // 如果缓存已满，移除频率最小的元素
+        if (cache_.size() == capacity_) {
+            evict();
+        }
+
+        // 插入新的key-value
+        cache_[key] = {value, 1};  // value和频率都要存储
+        freq_map_[1].push_back(key);
+    }
+
+private:
+    // 存储key的值以及使用频率
+    std::unordered_map<KeyType, std::pair<ValueType, int>> cache_;
+    // 存储频率 -> 对应频率的key列表
+    std::unordered_map<int, std::list<KeyType>> freq_map_;
+    // 用于线程同步
+    std::mutex mutex_;
+    // 缓存容量
+    int capacity_;
+
+    // 增加key的访问频率
+    void touch(const KeyType& key) {
+        int freq = cache_[key].second;
+        cache_[key].second++;
+
+        // 从旧频率列表中移除key
+        freq_map_[freq].remove(key);
+
+        // 如果旧频率的key列表为空，删除该频率
+        if (freq_map_[freq].empty()) {
+            freq_map_.erase(freq);
+        }
+
+        // 将key加入新的频率列表
+        freq_map_[freq + 1].push_back(key);
+    }
+
+    // 移除频率最小的key
+    void evict() {
+        // 获取频率最小的频率
+        int min_freq = freq_map_.begin()->first;
+
+        // 移除该频率下的第一个key
+        KeyType key_to_evict = freq_map_[min_freq].front();
+        freq_map_[min_freq].pop_front();
+
+        // 如果该频率的key列表为空，删除该频率
+        if (freq_map_[min_freq].empty()) {
+            freq_map_.erase(min_freq);
+        }
+
+        // 从缓存中移除
+        cache_.erase(key_to_evict);
+    }
+};
+
+int main() {
+    LFUCache<int, std::string> cache(3);
+
+    cache.put(1, "one");
+    cache.put(2, "two");
+    cache.put(3, "three");
+
+    try {
+        std::cout << "Get 1: " << cache.get(1) << std::endl; // should print "one"
+        cache.put(4, "four");
+
+        std::cout << "Get 2: " << cache.get(2) << std::endl; // should throw an exception
+    } catch (const std::exception& e) {
+        std::cout << "Error: " << e.what() << std::endl;
+    }
+
+    return 0;
+}
+/*
+代码解释：
+缓存存储结构：
+
+cache_: 维护一个哈希表存储每个键的值和访问频率。
+freq_map_: 维护一个频率到键列表的哈希表，用于跟踪不同频率的键。
+基本操作：
+
+get(key): 获取指定键的值，如果键不存在抛出异常。如果键存在，则更新其访问频率。
+put(key, value): 插入新的键值对，如果缓存已满则移除频率最小的元素。
+线程安全：
+
+使用了std::mutex来保证在多线程环境下的同步。
+频率更新：
+
+每次访问get或put时，都会通过touch()函数更新该键的使用频率，并把该键从旧的频率列表移动到新的频率列表。
+移除最少使用的元素：
+
+当缓存达到容量时，通过evict()函数删除频率最小的键。
+使用：
+cache.put(1, "one") 插入键值对。
+cache.get(1) 获取键1的值并更新其频率。
+如果缓存已满，put操作会自动删除频率最小的元素。
+注意：
+这个实现是一个线程安全的简化版本，针对多线程访问时使用了std::mutex，但是在性能要求很高的场景下可能还需要进一步优化，尤其是对于频繁的锁操作可能会影响性能。
+如果性能是一个瓶颈，可以考虑使用其他并发数据结构或更精细的锁粒度控制。
+*/
