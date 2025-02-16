@@ -114,6 +114,12 @@ int main() {
 
     return 0;
 }
+
+运行输出
+Get 1: one
+Get 2: two
+
+
 /*
 代码解释：
 缓存存储结构：
